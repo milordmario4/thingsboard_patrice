@@ -1,0 +1,70 @@
+#
+# Copyright © 2016-2025 The Thingsboard Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: thingsboard-build-and-test
+
+on:
+  push:
+    branches: [release-4.2]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    env:
+      MAVEN_OPTS: -Xmx1024m
+      NODE_OPTIONS: --max-old-space-size=4096
+      SUREFIRE_JAVA_OPTS: "-Xmx1200m -Xss256k -XX:+ExitOnOutOfMemoryError"
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Run BonusIntegrationTest
+        run: mvn -pl application test -Dtest=BonusIntegrationTest
+
+      - name: Test dao module
+        run: mvn test -pl dao -Dparallel=packages -DforkCount=4
+
+      - name: Test application - edge
+        run: mvn test -pl application -Dsurefire.excludes='**/nosql/*Test.java,**/*IntegrationTest.java' -Dtest='org.thingsboard.server.edge.**' -DforkCount=1 -Dparallel=none -Dsurefire.rerunFailingTestsCount=2 -Dsurefire.failOnFlakeCount=5
+
+      - name: Test common
+        run: mvn test -pl='!application,!dao,!ui-ngx,!msa/js-executor,!msa/web-ui'
+
+      - name: Test application - test suites
+        run: mvn test -pl application -Dsurefire.excludes='**/nosql/*Test.java,**/*IntegrationTest.java' -Dtest='**/*TestSuite.java' -DforkCount=4 -Dparallel=classes -Dsurefire.rerunFailingTestsCount=2 -Dsurefire.failOnFlakeCount=5
+
+      - name: Test application - service
+        run: mvn test -pl application -Dsurefire.excludes='**/nosql/*Test.java,**/*IntegrationTest.java' -Dtest='org.thingsboard.server.service.**' -DforkCount=1 -Dparallel=none -Dsurefire.rerunFailingTestsCount=2 -Dsurefire.failOnFlakeCount=5
+
+      - name: Test application - controller
+        run: mvn test -pl application -Dsurefire.excludes='**/nosql/*Test.java,**/*IntegrationTest.java' -Dtest='org.thingsboard.server.controller.**' -DforkCount=1 -Dparallel=none -Dsurefire.rerunFailingTestsCount=2 -Dsurefire.failOnFlakeCount=5
+
+      - name: Test application - remaining tests
+        run: mvn test -pl application '-Dtest=!**/nosql/*Test.java,!org.thingsboard.server.controller.**,!org.thingsboard.server.edge.**,!org.thingsboard.server.service.**,!org.thingsboard.server.transport.mqtt.**,!org.thingsboard.server.transport.coap.**,!org.thingsboard.server.transport.lwm2m.**,!**/*IntegrationTest.java' -DforkCount=6 -Dparallel=packages -Dsurefire.rerunFailingTestsCount=2 -Dsurefire.failOnFlakeCount=5
+
+      - name: Build project
+        run: mvn clean install -DskipTests
+
+      - name: Start ThingsBoard
+        run: |
+          java -jar application/target/thingsboard-4.2.1.1-boot.jar > tb.log 2>&1 &
+          sleep 60
